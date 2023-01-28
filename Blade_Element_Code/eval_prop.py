@@ -296,7 +296,8 @@ def solve_element(angle_vel, radius, dr, chord, num_blades, cl_func, cd_func,
     swirl_fact  = guess_final[1]
 
     # Calculate final thrust and torque
-    emp_corr_fact = 2 #NOTE: Emperical Correction Factor!
+    """THIS IS THE LOCATION OF THE EMPERICAL CORRECTION FACTOR!"""
+    emp_corr_fact = 1 #NOTE: Emperical Correction Factor! (1=no corrrection)
     thrust = thrust_momentum(vel_ind, radius, dr) / emp_corr_fact
     torque = torque_momentum(vel_ind, swirl_fact, angle_vel, radius, dr) /\
              emp_corr_fact
@@ -391,6 +392,59 @@ def evaluate_prop_slow(In_prop, debug = False, num_stations = 100):
     result = [thrusts, torques, vel_inds, swirl_facts]
     return result
 
+def evaluate_prop_fast(In_prop, debug = False, num_stations = 100):
+    """
+    Calculates thrust, torque, induced velocity, and swirl factor profiles for
+    a prop by saving them in lists. This method is faster because doesn't store
+    the value at each station
+
+    Total values for prop are calcualted via a Reimann sum over radius
+
+    args:
+        In_prop: a Prop object
+        debug:   whether or not to display intermediate output (default False)
+        num_stations: number of differential elements to use to approximate
+            integral over radius of prop (default 100)
+    returns: a list of the form [thrust, torque, induced_velocity, swirl_factor]
+    """
+
+    # Read data from prop object
+    angle_vel  = In_prop.angle_vel
+    num_blades = In_prop.num_blades
+    diameter   = In_prop.diameter
+    cl_func    = In_prop.get_cl
+    cd_func    = In_prop.get_cd
+    pitch      = In_prop.pitch
+
+    # Initialize loop parameters
+    dr           = (diameter/2) / num_stations
+    radius       = 0
+    thrust       = 0
+    torque       = 0
+    vel_ind      = 0
+    swirl_fact   = 0
+    
+    # Loop through stations
+    for i in range(num_stations):
+        #iteration specific geometry
+        radius += dr
+        chord  = In_prop.get_chord(radius)
+
+        # Calculate
+        if debug:
+            print("\n") #blank line for formatting debug output
+        result_list = solve_element(angle_vel, radius, dr, chord, num_blades,
+                                    cl_func, cd_func, pitch, debug = debug)
+        thrust      += result_list[0]
+        torque      += result_list[1]
+        vel_ind     += result_list[2] #store sum (do division later for avg)
+        swirl_fact  += result_list[3] #store sum (do division later for avg)
+
+    # Average, Pack into list, and return
+    vel_ind = vel_ind / num_stations
+    result = [thrust, torque, vel_ind, swirl_fact]
+    return result
+
 def make_cropped_4blader():
     """
     Creates Prop object with attributes and methods correspoding to 4 bladed
@@ -425,7 +479,7 @@ def make_cropped_4blader():
     #return
     return cropped_4_blade
 
-def rpm_sweep():
+def rpm_sweep(rpm_max=5152, num_rpms=10):
     """
     Sweeps RPM of cropped 4-bladed prop
     """
@@ -434,20 +488,24 @@ def rpm_sweep():
     cropped_4_blade = make_cropped_4blader()
 
     # Calculate
-    num_rpms = 10
-    d_rpm    = 539.62 / num_rpms
+    rad_to_rpm    = 60 / (2*np.pi)
+    max_angle_vel = rpm_max / rad_to_rpm #rad/s
+    num_rpms = num_rpms
+    d_rpm    = max_angle_vel / num_rpms
     rpm_list = []
     thrusts  = []
+    torques  = []
     for index in range(1,num_rpms):
         angle_vel = (index) * d_rpm
-        rpm_list.append(angle_vel * 9.549296596425384)
+        rpm_list.append(angle_vel * rad_to_rpm)
         cropped_4_blade.set_angle_vel(angle_vel)
-        result    = evaluate_prop_slow(cropped_4_blade, debug = False,
+        result    = evaluate_prop_fast(cropped_4_blade, debug = False,
                                 num_stations = 1000)
-        thrusts.append(sum(result[0]))
+        thrusts.append(result[0])
+        torques.append(result[1])
 
     plt.plot(rpm_list, thrusts)
-    plt.ylabel("Thrust")
+    plt.ylabel("Thrust (N)")
     plt.xlabel("RPM")
     plt.show()
 
@@ -514,6 +572,7 @@ def eval_cropped_4blader():
 
 def main():
     rpm_sweep()
+    #eval_cropped_4blader()
     
 if __name__ == "__main__":
     main()
